@@ -1,137 +1,134 @@
-import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting } from 'obsidian';
+import { Plugin, Notice } from 'obsidian';
+import { AskForTagModal } from "./modal";
 
 // Remember to rename these classes and interfaces!
 
-interface MyPluginSettings {
-	mySetting: string;
-}
-
-const DEFAULT_SETTINGS: MyPluginSettings = {
-	mySetting: 'default'
-}
-
-export default class MyPlugin extends Plugin {
-	settings: MyPluginSettings;
+export default class LyonsquarkWorkflowPlugin extends Plugin {
 
 	async onload() {
-		await this.loadSettings();
-
-		// This creates an icon in the left ribbon.
-		const ribbonIconEl = this.addRibbonIcon('dice', 'Sample Plugin', (evt: MouseEvent) => {
-			// Called when the user clicks the icon.
-			new Notice('This is a notice!');
-		});
-		// Perform additional things with the ribbon
-		ribbonIconEl.addClass('my-plugin-ribbon-class');
-
-		// This adds a status bar item to the bottom of the app. Does not work on mobile apps.
-		const statusBarItemEl = this.addStatusBarItem();
-		statusBarItemEl.setText('Status Bar Text');
-
-		// This adds a simple command that can be triggered anywhere
 		this.addCommand({
-			id: 'open-sample-modal-simple',
-			name: 'Open sample modal (simple)',
+			id: "make-perm-notes-from-lit",
+			name: "Make Permanent Notes from Literature",
 			callback: () => {
-				new SampleModal(this.app).open();
+				this.makePermNotesFromLit();
 			}
 		});
-		// This adds an editor command that can perform some operation on the current editor instance
-		this.addCommand({
-			id: 'sample-editor-command',
-			name: 'Sample editor command',
-			editorCallback: (editor: Editor, view: MarkdownView) => {
-				console.log(editor.getSelection());
-				editor.replaceSelection('Sample Editor Command');
-			}
-		});
-		// This adds a complex command that can check whether the current state of the app allows execution of the command
-		this.addCommand({
-			id: 'open-sample-modal-complex',
-			name: 'Open sample modal (complex)',
-			checkCallback: (checking: boolean) => {
-				// Conditions to check
-				const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
-				if (markdownView) {
-					// If checking is true, we're simply "checking" if the command can be run.
-					// If checking is false, then we want to actually perform the operation.
-					if (!checking) {
-						new SampleModal(this.app).open();
+	}
+
+	// Make permanent notes from a literature note
+	async makePermNotesFromLit() {
+
+		const permFolder = "Notes/Permanent";  // Maybe make this a setting
+
+		// Does the permFolder exist?
+		if (!await this.app.vault.adapter.exists(permFolder)) {
+			new Notice(`Could not find folder ${permFolder}`, 5000);
+			return;
+		}
+
+		// Get the active file (the literature note)
+		const activeFile = this.app.workspace.getActiveFile();
+		if (!activeFile) {
+			new Notice("No active note", 5000);
+			return;
+		}
+
+		// Get the headings in the literature notes
+		const currentFileCache = this.app.metadataCache.getFileCache(activeFile);
+		const headingsInFile = currentFileCache.headings;
+		if (!headingsInFile) {
+			new Notice(`No headings in file ${activeFile.name}`, 5000);
+			return;
+		}
+
+		// Get the text of the whole note
+		const fileText = await this.app.vault.cachedRead(activeFile);
+
+		// Figure out the tags
+		let tag = "";
+		const tagsRe = /\- tags: #note\/literature (.+)\n/;
+		const tagsMatch = fileText.match(tagsRe);
+
+		// Did we find any tags?
+		if (tagsMatch === null || tagsMatch[1].trim() == "") {
+
+			// Ask for the tag for new files
+			new AskForTagModal(this.app, (result) => {
+				tag = result;
+			}).open();
+		}
+		else {
+			tag = tagsMatch[1].trim();
+		}
+
+		headingsInFile.forEach(async (heading, index) => {
+
+			// Only examine level 3 headings
+			if (heading.level === 3) {
+
+				// Find the [[Term]]
+				let titleRe = /\[\[(.+)\]\]/;
+				const match = heading.heading.match(titleRe);
+				if (match === null) {
+					new Notice(`No link in ${heading.heading}`)
+				}
+				else {
+					// Determine the name, path and text to put in the permanent note
+					const title = match[1].trim();
+					const path = `${permFolder}/${title}.md`;
+					const text = heading.heading.replace(/[@\[\]]/g, "");
+					const linkBack = `![[${activeFile.basename}#${text}]]`;
+
+					// Does this note already exist?
+					if (text && !(await this.app.vault.adapter.exists(path))) {
+						// New note
+						// We want to copy in the text of the block from the lit note
+						let blockText = "";
+						let startPos = heading.position.end.offset + 1;
+						let endPos = 0;
+						let lookAHead = index + 1;
+
+						while (lookAHead < headingsInFile.length) {
+							if (headingsInFile[lookAHead].level <= 3) {
+								// We've found the end of the block
+								endPos = headingsInFile[lookAHead].position.start.offset - 1;
+								break;
+							}
+							else {
+								lookAHead++;
+							}
+						}
+
+						// Did we find the end?
+						if (endPos > 0) {
+							blockText = fileText.substring(startPos, endPos);
+						}
+						else {
+							blockText = fileText.substring(startPos);
+						}
+
+						const toWrite = `# ${title}\n${tag}\n\n\n${blockText.trim()}\n\n\n## Scholarship\n${linkBack}\n`;
+						await this.app.vault.create(path, toWrite);
+						new Notice(`Created permanent note ${title}`)
 					}
 
-					// This command will only show up in Command Palette when the check function returns true
-					return true;
+					else if (text) {
+						// Note already exists
+						const noteContents = await this.app.vault.adapter.read(path)
+
+						// Make sure our link isn't already there
+						if (!(noteContents.includes(linkBack))) {
+							const toWrite = `${noteContents.trim()}\n\n#NEEDS_MERGING ${linkBack}\n`
+							await this.app.vault.adapter.write(path, toWrite);
+							new Notice(`Adding to permanent note ${title}. WILL NEED MERGING`)
+						}
+						else {
+							new Notice(`Not duplicating in ${title}`)
+						}
+					}
 				}
+
 			}
 		});
-
-		// This adds a settings tab so the user can configure various aspects of the plugin
-		this.addSettingTab(new SampleSettingTab(this.app, this));
-
-		// If the plugin hooks up any global DOM events (on parts of the app that doesn't belong to this plugin)
-		// Using this function will automatically remove the event listener when this plugin is disabled.
-		this.registerDomEvent(document, 'click', (evt: MouseEvent) => {
-			console.log('click', evt);
-		});
-
-		// When registering intervals, this function will automatically clear the interval when the plugin is disabled.
-		this.registerInterval(window.setInterval(() => console.log('setInterval'), 5 * 60 * 1000));
-	}
-
-	onunload() {
-
-	}
-
-	async loadSettings() {
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
-	}
-
-	async saveSettings() {
-		await this.saveData(this.settings);
-	}
-}
-
-class SampleModal extends Modal {
-	constructor(app: App) {
-		super(app);
-	}
-
-	onOpen() {
-		const {contentEl} = this;
-		contentEl.setText('Woah!');
-	}
-
-	onClose() {
-		const {contentEl} = this;
-		contentEl.empty();
-	}
-}
-
-class SampleSettingTab extends PluginSettingTab {
-	plugin: MyPlugin;
-
-	constructor(app: App, plugin: MyPlugin) {
-		super(app, plugin);
-		this.plugin = plugin;
-	}
-
-	display(): void {
-		const {containerEl} = this;
-
-		containerEl.empty();
-
-		containerEl.createEl('h2', {text: 'Settings for my awesome plugin.'});
-
-		new Setting(containerEl)
-			.setName('Setting #1')
-			.setDesc('It\'s a secret')
-			.addText(text => text
-				.setPlaceholder('Enter your secret')
-				.setValue(this.plugin.settings.mySetting)
-				.onChange(async (value) => {
-					console.log('Secret: ' + value);
-					this.plugin.settings.mySetting = value;
-					await this.plugin.saveSettings();
-				}));
 	}
 }
