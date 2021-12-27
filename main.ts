@@ -1,5 +1,4 @@
 import { Plugin, Notice } from 'obsidian';
-import { AskForTagModal } from "./modal";
 
 // Remember to rename these classes and interfaces!
 
@@ -51,11 +50,8 @@ export default class LyonsquarkWorkflowPlugin extends Plugin {
 
 		// Did we find any tags?
 		if (tagsMatch === null || tagsMatch[1].trim() == "") {
-
-			// Ask for the tag for new files
-			new AskForTagModal(this.app, (result) => {
-				tag = result;
-			}).open();
+			new Notice(`Not tags in file ${activeFile.name}`, 5000);
+			return;
 		}
 		else {
 			tag = tagsMatch[1].trim();
