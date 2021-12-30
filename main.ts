@@ -32,6 +32,12 @@ export default class LyonsquarkWorkflowPlugin extends Plugin {
 			return;
 		}
 
+		// Are we in the literature directory?
+		if (activeFile.parent.path != "Notes/Literature") {
+			new Notice("Note not in Notes/Literature", 5000);
+			return;
+		}
+
 		// Get the headings in the literature notes
 		const currentFileCache = this.app.metadataCache.getFileCache(activeFile);
 		const headingsInFile = currentFileCache.headings;
